@@ -1,0 +1,8 @@
+.agents/
+.codex/
+.gradle/
+.gradle-home/
+.kotlin/
+local.properties
+build/
+.vscode/
