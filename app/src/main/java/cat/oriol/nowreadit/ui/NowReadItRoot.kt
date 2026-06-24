@@ -18,8 +18,10 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
@@ -27,6 +29,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +53,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -68,6 +72,7 @@ import cat.oriol.nowreadit.data.local.LibraryItemEntity
 import cat.oriol.nowreadit.data.local.hasCurrentAudio
 import cat.oriol.nowreadit.data.local.hasGenerationForCurrentText
 import cat.oriol.nowreadit.data.local.needsAudioForCurrentText
+import java.net.URI
 
 private const val ROUTE_LIBRARY = "library"
 private const val ROUTE_SETTINGS = "settings"
@@ -308,6 +313,13 @@ private fun LibraryItemEntity.libraryStatusLabel(): String? = when {
     else -> "Ready to read"
 }
 
+private fun websiteDomain(url: String): String =
+    runCatching { URI(url).host }
+        .getOrNull()
+        ?.removePrefix("www.")
+        ?.takeIf { it.isNotBlank() }
+        ?: url
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ItemDetailScreen(
@@ -351,20 +363,6 @@ private fun ItemDetailScreen(
         topBar = {
             TopAppBar(
                 title = { Text(if (isEditing) "Edit text" else currentItem?.title ?: "Item") },
-                navigationIcon = {
-                    TextButton(
-                        onClick = {
-                            if (isEditing) {
-                                isEditing = false
-                                editorText = item?.extractedText.orEmpty()
-                            } else {
-                                onBack()
-                            }
-                        },
-                    ) {
-                        Text("Back")
-                    }
-                },
             )
         },
         bottomBar = {
@@ -454,6 +452,7 @@ private fun ArticleDetailContent(
 ) {
     val hasGenerationForCurrentText = libraryItem.hasGenerationForCurrentText()
     val needsAudioForCurrentText = libraryItem.needsAudioForCurrentText()
+    val uriHandler = LocalUriHandler.current
 
     LazyColumn(
         modifier = modifier
@@ -463,10 +462,29 @@ private fun ArticleDetailContent(
         contentPadding = PaddingValues(vertical = 16.dp),
     ) {
         item {
-            Text(
-                text = libraryItem.sourceUrl,
-                style = MaterialTheme.typography.bodySmall,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FilledTonalButton(onClick = { uriHandler.openUri(libraryItem.sourceUrl) }) {
+                    Text(
+                        text = websiteDomain(libraryItem.sourceUrl),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledIconButton(onClick = onEdit) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Edit text")
+                    }
+                    if (needsAudioForCurrentText) {
+                        FilledIconButton(onClick = onReadNow) {
+                            Icon(Icons.Filled.LibraryMusic, contentDescription = "Generate audio")
+                        }
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = "Imported ${formatTimestamp(libraryItem.importedAt)}",
@@ -479,18 +497,6 @@ private fun ArticleDetailContent(
                     status = libraryItem.audioStatus,
                     progressPercent = libraryItem.audioProgressPercent,
                 )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onEdit) {
-                    Text("Edit text")
-                }
-                if (needsAudioForCurrentText) {
-                    Button(onClick = onReadNow) {
-                        Text("Read it now")
-                    }
-                }
             }
         }
         item {
