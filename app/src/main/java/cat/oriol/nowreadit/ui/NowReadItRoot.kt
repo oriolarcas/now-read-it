@@ -50,6 +50,7 @@ import androidx.navigation.navArgument
 import cat.oriol.nowreadit.NowReadItApplication
 import cat.oriol.nowreadit.data.TtsSettings
 import cat.oriol.nowreadit.data.local.AudioStatus
+import cat.oriol.nowreadit.data.local.ImportStatus
 import cat.oriol.nowreadit.data.local.LibraryItemEntity
 import cat.oriol.nowreadit.data.local.hasCurrentAudio
 import cat.oriol.nowreadit.data.local.hasGenerationForCurrentText
@@ -239,11 +240,14 @@ private fun LibraryItemCard(
                 text = listOfNotNull(item.siteName, formatTimestamp(item.importedAt)).joinToString(" • "),
                 style = MaterialTheme.typography.bodySmall,
             )
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = "Import: ${item.importStatus.name.lowercase()} • Audio: ${item.audioStatus.name.lowercase()}",
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            item.libraryStatusLabel()?.let { statusLabel ->
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = statusLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
             if (item.hasGenerationForCurrentText()) {
                 AudioProgress(
                     status = item.audioStatus,
@@ -276,6 +280,18 @@ private fun LibraryItemCard(
             }
         }
     }
+}
+
+private fun LibraryItemEntity.libraryStatusLabel(): String? = when {
+    importStatus == ImportStatus.FAILED -> "Import failed"
+    hasGenerationForCurrentText() -> when (audioStatus) {
+        AudioStatus.QUEUED -> "Narration queued"
+        else -> "Narrating"
+    }
+    hasCurrentAudio() -> null
+    audioPath != null -> "Edited"
+    audioStatus == AudioStatus.FAILED -> "Narration failed"
+    else -> "Ready to read"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
