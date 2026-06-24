@@ -156,7 +156,7 @@ class LibraryRepository(
             title = extractedPage.title,
             siteName = extractedPage.siteName,
             importedAt = System.currentTimeMillis(),
-            extractedText = extractedPage.text,
+            extractedText = textWithTitle(extractedPage.title, extractedPage.text),
             importStatus = ImportStatus.READY,
             audioStatus = AudioStatus.NOT_STARTED,
         )
