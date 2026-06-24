@@ -51,6 +51,9 @@ import cat.oriol.nowreadit.NowReadItApplication
 import cat.oriol.nowreadit.data.TtsSettings
 import cat.oriol.nowreadit.data.local.AudioStatus
 import cat.oriol.nowreadit.data.local.LibraryItemEntity
+import cat.oriol.nowreadit.data.local.hasCurrentAudio
+import cat.oriol.nowreadit.data.local.hasGenerationForCurrentText
+import cat.oriol.nowreadit.data.local.needsAudioForCurrentText
 
 private const val ROUTE_LIBRARY = "library"
 private const val ROUTE_SETTINGS = "settings"
@@ -241,10 +244,12 @@ private fun LibraryItemCard(
                 text = "Import: ${item.importStatus.name.lowercase()} • Audio: ${item.audioStatus.name.lowercase()}",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            AudioProgress(
-                status = item.audioStatus,
-                progressPercent = item.audioProgressPercent,
-            )
+            if (item.hasGenerationForCurrentText()) {
+                AudioProgress(
+                    status = item.audioStatus,
+                    progressPercent = item.audioProgressPercent,
+                )
+            }
             item.lastError?.takeIf { it.isNotBlank() }?.let { error ->
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
@@ -396,6 +401,10 @@ private fun ArticleDetailContent(
     onPlayAudio: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val hasCurrentAudio = libraryItem.hasCurrentAudio()
+    val hasGenerationForCurrentText = libraryItem.hasGenerationForCurrentText()
+    val needsAudioForCurrentText = libraryItem.needsAudioForCurrentText()
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -414,35 +423,31 @@ private fun ArticleDetailContent(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        item {
-            AudioProgress(
-                status = libraryItem.audioStatus,
-                progressPercent = libraryItem.audioProgressPercent,
-            )
+        if (hasGenerationForCurrentText) {
+            item {
+                AudioProgress(
+                    status = libraryItem.audioStatus,
+                    progressPercent = libraryItem.audioProgressPercent,
+                )
+            }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onEdit) {
                     Text("Edit text")
                 }
-                Button(
-                    onClick = onReadNow,
-                    enabled = libraryItem.audioStatus != AudioStatus.GENERATING && libraryItem.extractedText.isNotBlank(),
-                ) {
-                    Text(
-                        when (libraryItem.audioStatus) {
-                            AudioStatus.QUEUED -> "Queued"
-                            AudioStatus.GENERATING -> "Generating..."
-                            else -> "Read it now"
-                        },
-                    )
+                if (needsAudioForCurrentText) {
+                    Button(onClick = onReadNow) {
+                        Text("Read it now")
+                    }
                 }
             }
         }
         item {
-            if (libraryItem.audioStatus == AudioStatus.READY && libraryItem.audioPath != null) {
+            if (libraryItem.audioPath != null) {
                 Button(onClick = onPlayAudio) {
-                    Text("Play MP3 ${formatDuration(libraryItem.audioDurationMs)?.let { "($it)" } ?: ""}")
+                    val duration = formatDuration(libraryItem.audioDurationMs)?.let { " ($it)" }.orEmpty()
+                    Text("${if (hasCurrentAudio) "Play MP3" else "Play previous MP3"}$duration")
                 }
             }
         }

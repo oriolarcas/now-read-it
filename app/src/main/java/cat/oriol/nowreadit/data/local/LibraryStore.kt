@@ -51,6 +51,7 @@ class LibraryStore(context: Context) {
         status: AudioStatus,
         lastError: String?,
         progressPercent: Int? = null,
+        generationTextHash: String? = null,
     ) = mutex.withLock {
         persist(
             itemsState.value.map { item ->
@@ -58,6 +59,7 @@ class LibraryStore(context: Context) {
                     item.copy(
                         audioStatus = status,
                         audioProgressPercent = progressPercent,
+                        audioGenerationTextHash = generationTextHash,
                         lastError = lastError,
                     )
                 } else {
@@ -79,13 +81,15 @@ class LibraryStore(context: Context) {
         )
     }
 
-    suspend fun markAudioReady(itemId: Long, audioPath: String, durationMs: Long?) = mutex.withLock {
+    suspend fun markAudioReady(itemId: Long, audioPath: String, durationMs: Long?, audioTextHash: String) = mutex.withLock {
         persist(
             itemsState.value.map { item ->
                 if (item.id == itemId) {
                     item.copy(
                         audioStatus = AudioStatus.READY,
                         audioProgressPercent = null,
+                        audioTextHash = audioTextHash,
+                        audioGenerationTextHash = null,
                         audioPath = audioPath,
                         audioDurationMs = durationMs,
                         lastError = null,
@@ -106,10 +110,24 @@ class LibraryStore(context: Context) {
         val raw = file.readText()
         if (raw.isBlank()) return
         val array = JSONArray(raw)
-        itemsState.value = buildList {
+        val loadedItems = buildList {
             for (index in 0 until array.length()) {
                 add(array.getJSONObject(index).toEntity())
             }
+        }
+        val migratedItems = loadedItems.map { item ->
+            if (item.audioStatus == AudioStatus.READY && item.audioPath != null && item.audioTextHash == null) {
+                item.copy(audioTextHash = item.currentTextAudioHash())
+            } else {
+                item
+            }
+        }.sortedByDescending { it.importedAt }
+        itemsState.value = migratedItems
+        if (migratedItems != loadedItems) {
+            val migratedJson = JSONArray().apply {
+                migratedItems.forEach { put(it.toJson()) }
+            }
+            file.writeText(migratedJson.toString())
         }
     }
 
@@ -132,6 +150,8 @@ class LibraryStore(context: Context) {
         .put("importStatus", importStatus.name)
         .put("audioStatus", audioStatus.name)
         .put("audioProgressPercent", audioProgressPercent)
+        .put("audioTextHash", audioTextHash)
+        .put("audioGenerationTextHash", audioGenerationTextHash)
         .put("audioPath", audioPath)
         .put("audioDurationMs", audioDurationMs)
         .put("lastError", lastError)
@@ -149,6 +169,8 @@ class LibraryStore(context: Context) {
         audioProgressPercent = optInt("audioProgressPercent").takeIf {
             has("audioProgressPercent") && !isNull("audioProgressPercent")
         },
+        audioTextHash = optString("audioTextHash").takeIf { it.isNotBlank() },
+        audioGenerationTextHash = optString("audioGenerationTextHash").takeIf { it.isNotBlank() },
         audioPath = optString("audioPath").takeIf { it.isNotBlank() },
         audioDurationMs = optLong("audioDurationMs").takeIf { has("audioDurationMs") && !isNull("audioDurationMs") },
         lastError = optString("lastError").takeIf { it.isNotBlank() },

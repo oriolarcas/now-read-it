@@ -11,6 +11,8 @@ import cat.oriol.nowreadit.data.local.AudioStatus
 import cat.oriol.nowreadit.data.local.ImportStatus
 import cat.oriol.nowreadit.data.local.LibraryItemEntity
 import cat.oriol.nowreadit.data.local.LibraryStore
+import cat.oriol.nowreadit.data.local.currentTextAudioHash
+import cat.oriol.nowreadit.data.local.textAudioHash
 import cat.oriol.nowreadit.data.remote.OpenAiTtsClient
 import cat.oriol.nowreadit.data.remote.PageContentExtractor
 import cat.oriol.nowreadit.worker.TtsWorker
@@ -119,6 +121,12 @@ class LibraryRepository(
                         audioDurationMs = if (audioData != null) archiveItem.item.audioDurationMs else null,
                         audioStatus = if (audioData != null) AudioStatus.READY else AudioStatus.NOT_STARTED,
                         audioProgressPercent = null,
+                        audioTextHash = if (audioData != null) {
+                            archiveItem.item.audioTextHash ?: archiveItem.item.currentTextAudioHash()
+                        } else {
+                            null
+                        },
+                        audioGenerationTextHash = null,
                         lastError = null,
                     ),
                 )
@@ -130,6 +138,7 @@ class LibraryRepository(
                         itemId = insertedId,
                         audioPath = outputFile.path,
                         durationMs = archiveItem.item.audioDurationMs ?: AudioMetadataReader.readDurationMs(outputFile.path),
+                        audioTextHash = archiveItem.item.audioTextHash ?: archiveItem.item.currentTextAudioHash(),
                     )
                     importedAudioCount += 1
                 }
@@ -178,6 +187,8 @@ class LibraryRepository(
     suspend fun enqueueAudioGeneration(itemId: Long) {
         val settings = settingsStore.load()
         check(settings.apiKey.isNotBlank()) { "Configure your OpenAI API key in Settings first." }
+        val item = libraryStore.getItem(itemId) ?: error("Item not found")
+        val generationTextHash = item.currentTextAudioHash()
 
         Log.i(tag, "Queueing audio generation for itemId=$itemId model=${settings.model} voice=${settings.voice}")
 
@@ -186,6 +197,7 @@ class LibraryRepository(
             status = AudioStatus.QUEUED,
             lastError = null,
             progressPercent = 0,
+            generationTextHash = generationTextHash,
         )
 
         val request = OneTimeWorkRequestBuilder<TtsWorker>()
@@ -211,28 +223,43 @@ class LibraryRepository(
         val settings = settingsStore.load()
         check(settings.apiKey.isNotBlank()) { "OpenAI API key is missing." }
         check(item.extractedText.isNotBlank()) { "There is no text to synthesize." }
+        val textSnapshot = item.extractedText
+        val generationTextHash = textAudioHash(textSnapshot)
 
         Log.i(
             tag,
-            "Starting audio generation for itemId=$itemId title=${item.title.take(80)} textLength=${item.extractedText.length}",
+            "Starting audio generation for itemId=$itemId title=${item.title.take(80)} textLength=${textSnapshot.length}",
         )
 
-        libraryStore.updateAudioStatus(itemId, AudioStatus.GENERATING, null, progressPercent = 0)
+        libraryStore.updateAudioStatus(
+            itemId = itemId,
+            status = AudioStatus.GENERATING,
+            lastError = null,
+            progressPercent = 0,
+            generationTextHash = generationTextHash,
+        )
 
         val audioDir = File(appContext.filesDir, "audio").apply { mkdirs() }
         val outputFile = File(audioDir, "item-$itemId.mp3")
+        val temporaryOutputFile = File(audioDir, "item-$itemId-generating.mp3")
 
         try {
+            temporaryOutputFile.delete()
             ttsClient.synthesizeToFile(
                 settings = settings,
-                text = item.extractedText,
-                outputFile = outputFile,
+                text = textSnapshot,
+                outputFile = temporaryOutputFile,
                 onProgress = { progress ->
                     libraryStore.updateAudioProgress(itemId, progress)
                     onProgress(progress)
                 },
             )
 
+            outputFile.delete()
+            if (!temporaryOutputFile.renameTo(outputFile)) {
+                temporaryOutputFile.copyTo(outputFile, overwrite = true)
+                temporaryOutputFile.delete()
+            }
             val duration = AudioMetadataReader.readDurationMs(outputFile.path)
             Log.i(
                 tag,
@@ -242,13 +269,15 @@ class LibraryRepository(
                 itemId = itemId,
                 audioPath = outputFile.path,
                 durationMs = duration,
+                audioTextHash = generationTextHash,
             )
         } catch (throwable: Throwable) {
-            outputFile.delete()
+            temporaryOutputFile.delete()
             Log.e(tag, "Audio generation failed for itemId=$itemId", throwable)
+            val currentItem = libraryStore.getItem(itemId)
             libraryStore.updateAudioStatus(
                 itemId = itemId,
-                status = AudioStatus.FAILED,
+                status = if (currentItem?.audioPath != null) AudioStatus.READY else AudioStatus.FAILED,
                 lastError = throwable.message ?: "Audio generation failed",
                 progressPercent = null,
             )
@@ -266,6 +295,7 @@ class LibraryRepository(
         .put("importStatus", importStatus.name)
         .put("audioStatus", if (audioEntryName != null) AudioStatus.READY.name else AudioStatus.NOT_STARTED.name)
         .put("audioProgressPercent", null)
+        .put("audioTextHash", if (audioEntryName != null) audioTextHash ?: currentTextAudioHash() else null)
         .put("audioDurationMs", audioDurationMs)
         .put("audioEntryName", audioEntryName)
 
@@ -281,6 +311,7 @@ class LibraryRepository(
                 textEditedAt = optLong("textEditedAt").takeIf { has("textEditedAt") && !isNull("textEditedAt") },
                 importStatus = ImportStatus.valueOf(optString("importStatus", ImportStatus.READY.name)),
                 audioStatus = if (audioEntryName != null) AudioStatus.READY else AudioStatus.NOT_STARTED,
+                audioTextHash = optString("audioTextHash").takeIf { it.isNotBlank() },
                 audioDurationMs = optLong("audioDurationMs").takeIf { has("audioDurationMs") && !isNull("audioDurationMs") },
             ),
             audioEntryName = audioEntryName,

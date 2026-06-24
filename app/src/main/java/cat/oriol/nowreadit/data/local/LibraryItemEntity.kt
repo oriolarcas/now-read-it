@@ -24,6 +24,8 @@ data class LibraryItemEntity(
     val importStatus: ImportStatus,
     val audioStatus: AudioStatus,
     val audioProgressPercent: Int? = null,
+    val audioTextHash: String? = null,
+    val audioGenerationTextHash: String? = null,
     val audioPath: String? = null,
     val audioDurationMs: Long? = null,
     val lastError: String? = null,
