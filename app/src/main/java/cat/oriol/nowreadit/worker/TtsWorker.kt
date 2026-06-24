@@ -60,7 +60,7 @@ class TtsWorker(
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
             .setContentTitle(applicationContext.getString(R.string.app_name))
-            .setContentText("Generating MP3... $progress%")
+            .setContentText("Generating audio... $progress%")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setProgress(100, progress, progress == 0)

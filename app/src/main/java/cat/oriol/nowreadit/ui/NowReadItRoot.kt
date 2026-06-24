@@ -4,10 +4,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,16 +17,27 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -104,6 +117,7 @@ fun NowReadItRoot(
                 val viewModel: ItemDetailViewModel = viewModel(
                     factory = ItemDetailViewModelFactory(
                         itemId = itemId,
+                        appContext = application.applicationContext,
                         repository = application.appContainer.libraryRepository,
                     ),
                 )
@@ -168,7 +182,7 @@ private fun LibraryScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
             Text(
-                text = "Import a web page and keep the text and generated MP3 in one local item.",
+                text = "Import a web page and keep the text and generated audio in one local item.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(modifier = Modifier.height(16.dp))
@@ -271,7 +285,7 @@ private fun LibraryItemCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = formatDuration(item.audioDurationMs) ?: "No MP3 yet",
+                    text = formatDuration(item.audioDurationMs) ?: "No audio yet",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 TextButton(onClick = onDelete) {
@@ -303,11 +317,13 @@ private fun ItemDetailScreen(
 ) {
     val item by viewModel.item.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val playbackState by viewModel.playbackState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var editorText by rememberSaveable(itemId) { mutableStateOf("") }
     var lastBoundItemId by remember { mutableStateOf<Long?>(null) }
     var confirmGeneration by rememberSaveable { mutableStateOf(false) }
     var isEditing by rememberSaveable(itemId) { mutableStateOf(false) }
+    val currentItem = item
 
     LaunchedEffect(item?.id, item?.extractedText) {
         val current = item ?: return@LaunchedEffect
@@ -324,10 +340,17 @@ private fun ItemDetailScreen(
         }
     }
 
+    LaunchedEffect(currentItem?.id, currentItem?.audioPath) {
+        val playableItem = currentItem
+        if (playableItem?.audioPath != null) {
+            viewModel.preparePlayback(playableItem)
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (isEditing) "Edit text" else item?.title ?: "Item") },
+                title = { Text(if (isEditing) "Edit text" else currentItem?.title ?: "Item") },
                 navigationIcon = {
                     TextButton(
                         onClick = {
@@ -344,9 +367,23 @@ private fun ItemDetailScreen(
                 },
             )
         },
+        bottomBar = {
+            val playerItem = currentItem
+            if (!isEditing && playerItem?.audioPath != null) {
+                AudioPlayerBar(
+                    playbackState = playbackState,
+                    fallbackDurationMs = playerItem.audioDurationMs,
+                    isPreviousAudio = !playerItem.hasCurrentAudio(),
+                    onRestart = { viewModel.restart(playerItem) },
+                    onRewind = { viewModel.skipBy(-15_000L, playerItem) },
+                    onTogglePlayback = { viewModel.togglePlayback(playerItem) },
+                    onForward = { viewModel.skipBy(15_000L, playerItem) },
+                    onSeek = { positionMs -> viewModel.seekTo(positionMs, playerItem) },
+                )
+            }
+        },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) { paddingValues ->
-        val currentItem = item
         if (currentItem == null) {
             Column(
                 modifier = Modifier
@@ -375,7 +412,6 @@ private fun ItemDetailScreen(
                 libraryItem = currentItem,
                 onEdit = { isEditing = true },
                 onReadNow = { confirmGeneration = true },
-                onPlayAudio = { viewModel.playAudio(currentItem) },
                 modifier = Modifier.padding(paddingValues),
             )
         }
@@ -386,7 +422,7 @@ private fun ItemDetailScreen(
                 title = { Text("Read it now?") },
                 text = {
                     Text(
-                        "This will generate an MP3 for ${estimateReadingDuration(currentItem.extractedText)} of audio.",
+                        "This will generate about ${estimateReadingDuration(currentItem.extractedText)} of audio.",
                     )
                 },
                 confirmButton = {
@@ -414,10 +450,8 @@ private fun ArticleDetailContent(
     libraryItem: LibraryItemEntity,
     onEdit: () -> Unit,
     onReadNow: () -> Unit,
-    onPlayAudio: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val hasCurrentAudio = libraryItem.hasCurrentAudio()
     val hasGenerationForCurrentText = libraryItem.hasGenerationForCurrentText()
     val needsAudioForCurrentText = libraryItem.needsAudioForCurrentText()
 
@@ -460,14 +494,6 @@ private fun ArticleDetailContent(
             }
         }
         item {
-            if (libraryItem.audioPath != null) {
-                Button(onClick = onPlayAudio) {
-                    val duration = formatDuration(libraryItem.audioDurationMs)?.let { " ($it)" }.orEmpty()
-                    Text("${if (hasCurrentAudio) "Play MP3" else "Play previous MP3"}$duration")
-                }
-            }
-        }
-        item {
             libraryItem.lastError?.takeIf { it.isNotBlank() }?.let { error ->
                 Text(
                     text = error,
@@ -481,6 +507,100 @@ private fun ArticleDetailContent(
                     text = libraryItem.extractedText,
                     style = MaterialTheme.typography.bodyLarge,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AudioPlayerBar(
+    playbackState: PlaybackUiState,
+    fallbackDurationMs: Long?,
+    isPreviousAudio: Boolean,
+    onRestart: () -> Unit,
+    onRewind: () -> Unit,
+    onTogglePlayback: () -> Unit,
+    onForward: () -> Unit,
+    onSeek: (Long) -> Unit,
+) {
+    val durationMs = playbackState.durationMs.takeIf { it > 0 } ?: fallbackDurationMs ?: 0L
+    val positionMs = playbackState.positionMs.coerceIn(0L, durationMs.coerceAtLeast(0L))
+    val sliderValue = if (durationMs > 0) positionMs.toFloat() else 0f
+
+    Surface(
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 28.dp),
+        ) {
+            if (isPreviousAudio) {
+                Text(
+                    text = "Previous audio",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+            Slider(
+                value = sliderValue,
+                onValueChange = { onSeek(it.toLong()) },
+                valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
+                enabled = playbackState.isReady && durationMs > 0,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = formatDuration(positionMs) ?: "0:00",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    text = formatDuration(durationMs) ?: "0:00",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                IconButton(
+                    onClick = onRestart,
+                    enabled = playbackState.isReady,
+                    modifier = Modifier.align(Alignment.CenterStart),
+                ) {
+                    Icon(Icons.Filled.Replay, contentDescription = "Reset audio")
+                }
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = onRewind,
+                        enabled = playbackState.isReady,
+                    ) {
+                        Icon(Icons.Filled.FastRewind, contentDescription = "Rewind 15 seconds")
+                    }
+                    FilledIconButton(
+                        onClick = onTogglePlayback,
+                        modifier = Modifier.size(64.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (playbackState.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (playbackState.isPlaying) "Pause audio" else "Play audio",
+                            modifier = Modifier.size(36.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = onForward,
+                        enabled = playbackState.isReady,
+                    ) {
+                        Icon(Icons.Filled.FastForward, contentDescription = "Forward 15 seconds")
+                    }
+                }
             }
         }
     }
