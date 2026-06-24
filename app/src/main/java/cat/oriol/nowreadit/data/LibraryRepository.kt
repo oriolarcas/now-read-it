@@ -118,6 +118,7 @@ class LibraryRepository(
                         audioPath = null,
                         audioDurationMs = if (audioData != null) archiveItem.item.audioDurationMs else null,
                         audioStatus = if (audioData != null) AudioStatus.READY else AudioStatus.NOT_STARTED,
+                        audioProgressPercent = null,
                         lastError = null,
                     ),
                 )
@@ -184,6 +185,7 @@ class LibraryRepository(
             itemId = itemId,
             status = AudioStatus.QUEUED,
             lastError = null,
+            progressPercent = 0,
         )
 
         val request = OneTimeWorkRequestBuilder<TtsWorker>()
@@ -215,7 +217,7 @@ class LibraryRepository(
             "Starting audio generation for itemId=$itemId title=${item.title.take(80)} textLength=${item.extractedText.length}",
         )
 
-        libraryStore.updateAudioStatus(itemId, AudioStatus.GENERATING, null)
+        libraryStore.updateAudioStatus(itemId, AudioStatus.GENERATING, null, progressPercent = 0)
 
         val audioDir = File(appContext.filesDir, "audio").apply { mkdirs() }
         val outputFile = File(audioDir, "item-$itemId.mp3")
@@ -225,7 +227,10 @@ class LibraryRepository(
                 settings = settings,
                 text = item.extractedText,
                 outputFile = outputFile,
-                onProgress = onProgress,
+                onProgress = { progress ->
+                    libraryStore.updateAudioProgress(itemId, progress)
+                    onProgress(progress)
+                },
             )
 
             val duration = AudioMetadataReader.readDurationMs(outputFile.path)
@@ -245,6 +250,7 @@ class LibraryRepository(
                 itemId = itemId,
                 status = AudioStatus.FAILED,
                 lastError = throwable.message ?: "Audio generation failed",
+                progressPercent = null,
             )
             throw throwable
         }
@@ -259,6 +265,7 @@ class LibraryRepository(
         .put("textEditedAt", textEditedAt)
         .put("importStatus", importStatus.name)
         .put("audioStatus", if (audioEntryName != null) AudioStatus.READY.name else AudioStatus.NOT_STARTED.name)
+        .put("audioProgressPercent", null)
         .put("audioDurationMs", audioDurationMs)
         .put("audioEntryName", audioEntryName)
 

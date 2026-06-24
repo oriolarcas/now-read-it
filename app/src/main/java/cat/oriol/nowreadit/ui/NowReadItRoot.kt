@@ -12,11 +12,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -238,6 +241,10 @@ private fun LibraryItemCard(
                 text = "Import: ${item.importStatus.name.lowercase()} • Audio: ${item.audioStatus.name.lowercase()}",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            AudioProgress(
+                status = item.audioStatus,
+                progressPercent = item.audioProgressPercent,
+            )
             item.lastError?.takeIf { it.isNotBlank() }?.let { error ->
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
@@ -278,6 +285,8 @@ private fun ItemDetailScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var editorText by rememberSaveable(itemId) { mutableStateOf("") }
     var lastBoundItemId by remember { mutableStateOf<Long?>(null) }
+    var confirmGeneration by rememberSaveable { mutableStateOf(false) }
+    var isEditing by rememberSaveable(itemId) { mutableStateOf(false) }
 
     LaunchedEffect(item?.id, item?.extractedText) {
         val current = item ?: return@LaunchedEffect
@@ -297,9 +306,18 @@ private fun ItemDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(item?.title ?: "Item") },
+                title = { Text(if (isEditing) "Edit text" else item?.title ?: "Item") },
                 navigationIcon = {
-                    TextButton(onClick = onBack) {
+                    TextButton(
+                        onClick = {
+                            if (isEditing) {
+                                isEditing = false
+                                editorText = item?.extractedText.orEmpty()
+                            } else {
+                                onBack()
+                            }
+                        },
+                    ) {
                         Text("Back")
                     }
                 },
@@ -320,75 +338,195 @@ private fun ItemDetailScreen(
             return@Scaffold
         }
 
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(vertical = 16.dp),
-        ) {
-            item {
-                Text(
-                    text = currentItem.sourceUrl,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "Imported ${formatTimestamp(currentItem.importedAt)}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { viewModel.saveText(currentItem.id, editorText) },
-                        enabled = editorText != currentItem.extractedText,
-                    ) {
-                        Text("Save text")
-                    }
-                    Button(
-                        onClick = { viewModel.generateAudio(currentItem.id) },
-                        enabled = currentItem.audioStatus != AudioStatus.GENERATING && currentItem.extractedText.isNotBlank(),
-                    ) {
-                        Text(
-                            when (currentItem.audioStatus) {
-                                AudioStatus.QUEUED -> "Queued"
-                                AudioStatus.GENERATING -> "Generating..."
-                                AudioStatus.READY -> "Regenerate MP3"
-                                else -> "Generate MP3"
-                            },
-                        )
-                    }
-                }
-            }
-            item {
-                if (currentItem.audioStatus == AudioStatus.READY && currentItem.audioPath != null) {
-                    Button(onClick = { viewModel.playAudio(currentItem) }) {
-                        Text("Play MP3 ${formatDuration(currentItem.audioDurationMs)?.let { "($it)" } ?: ""}")
-                    }
-                }
-            }
-            item {
-                currentItem.lastError?.takeIf { it.isNotBlank() }?.let { error ->
+        if (isEditing) {
+            EditArticleText(
+                item = currentItem,
+                editorText = editorText,
+                onTextChange = { editorText = it },
+                onSave = {
+                    viewModel.saveText(currentItem.id, editorText)
+                    isEditing = false
+                },
+                modifier = Modifier.padding(paddingValues),
+            )
+        } else {
+            ArticleDetailContent(
+                libraryItem = currentItem,
+                onEdit = { isEditing = true },
+                onReadNow = { confirmGeneration = true },
+                onPlayAudio = { viewModel.playAudio(currentItem) },
+                modifier = Modifier.padding(paddingValues),
+            )
+        }
+
+        if (confirmGeneration) {
+            AlertDialog(
+                onDismissRequest = { confirmGeneration = false },
+                title = { Text("Read it now?") },
+                text = {
                     Text(
-                        text = error,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium,
+                        "This will generate an MP3 for ${estimateReadingDuration(currentItem.extractedText)} of audio.",
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            confirmGeneration = false
+                            viewModel.generateAudio(currentItem.id)
+                        },
+                    ) {
+                        Text("Generate")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmGeneration = false }) {
+                        Text("Cancel")
+                    }
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ArticleDetailContent(
+    libraryItem: LibraryItemEntity,
+    onEdit: () -> Unit,
+    onReadNow: () -> Unit,
+    onPlayAudio: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
+    ) {
+        item {
+            Text(
+                text = libraryItem.sourceUrl,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Imported ${formatTimestamp(libraryItem.importedAt)}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        item {
+            AudioProgress(
+                status = libraryItem.audioStatus,
+                progressPercent = libraryItem.audioProgressPercent,
+            )
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onEdit) {
+                    Text("Edit text")
                 }
-                OutlinedTextField(
-                    value = editorText,
-                    onValueChange = { editorText = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(420.dp),
-                    label = { Text("Extracted text") },
+                Button(
+                    onClick = onReadNow,
+                    enabled = libraryItem.audioStatus != AudioStatus.GENERATING && libraryItem.extractedText.isNotBlank(),
+                ) {
+                    Text(
+                        when (libraryItem.audioStatus) {
+                            AudioStatus.QUEUED -> "Queued"
+                            AudioStatus.GENERATING -> "Generating..."
+                            else -> "Read it now"
+                        },
+                    )
+                }
+            }
+        }
+        item {
+            if (libraryItem.audioStatus == AudioStatus.READY && libraryItem.audioPath != null) {
+                Button(onClick = onPlayAudio) {
+                    Text("Play MP3 ${formatDuration(libraryItem.audioDurationMs)?.let { "($it)" } ?: ""}")
+                }
+            }
+        }
+        item {
+            libraryItem.lastError?.takeIf { it.isNotBlank() }?.let { error ->
+                Text(
+                    text = error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            SelectionContainer {
+                Text(
+                    text = libraryItem.extractedText,
+                    style = MaterialTheme.typography.bodyLarge,
                 )
             }
         }
     }
+}
+
+@Composable
+private fun EditArticleText(
+    item: LibraryItemEntity,
+    editorText: String,
+    onTextChange: (String) -> Unit,
+    onSave: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+    ) {
+        OutlinedTextField(
+            value = editorText,
+            onValueChange = onTextChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            label = { Text("Article text") },
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Button(
+            onClick = onSave,
+            enabled = editorText != item.extractedText,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Save")
+        }
+    }
+}
+
+@Composable
+private fun AudioProgress(
+    status: AudioStatus,
+    progressPercent: Int?,
+) {
+    val visible = status == AudioStatus.QUEUED || status == AudioStatus.GENERATING
+    if (!visible) return
+
+    val percent = progressPercent?.coerceIn(0, 100) ?: 0
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = if (status == AudioStatus.QUEUED) "Waiting" else "Generating audio",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            text = "$percent%",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+    Spacer(modifier = Modifier.height(4.dp))
+    LinearProgressIndicator(
+        progress = { percent / 100f },
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

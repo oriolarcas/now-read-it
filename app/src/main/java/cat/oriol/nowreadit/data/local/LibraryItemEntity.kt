@@ -23,6 +23,7 @@ data class LibraryItemEntity(
     val textEditedAt: Long? = null,
     val importStatus: ImportStatus,
     val audioStatus: AudioStatus,
+    val audioProgressPercent: Int? = null,
     val audioPath: String? = null,
     val audioDurationMs: Long? = null,
     val lastError: String? = null,

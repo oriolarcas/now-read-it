@@ -46,10 +46,35 @@ class LibraryStore(context: Context) {
         )
     }
 
-    suspend fun updateAudioStatus(itemId: Long, status: AudioStatus, lastError: String?) = mutex.withLock {
+    suspend fun updateAudioStatus(
+        itemId: Long,
+        status: AudioStatus,
+        lastError: String?,
+        progressPercent: Int? = null,
+    ) = mutex.withLock {
         persist(
             itemsState.value.map { item ->
-                if (item.id == itemId) item.copy(audioStatus = status, lastError = lastError) else item
+                if (item.id == itemId) {
+                    item.copy(
+                        audioStatus = status,
+                        audioProgressPercent = progressPercent,
+                        lastError = lastError,
+                    )
+                } else {
+                    item
+                }
+            },
+        )
+    }
+
+    suspend fun updateAudioProgress(itemId: Long, progressPercent: Int) = mutex.withLock {
+        persist(
+            itemsState.value.map { item ->
+                if (item.id == itemId) {
+                    item.copy(audioProgressPercent = progressPercent.coerceIn(0, 100))
+                } else {
+                    item
+                }
             },
         )
     }
@@ -60,6 +85,7 @@ class LibraryStore(context: Context) {
                 if (item.id == itemId) {
                     item.copy(
                         audioStatus = AudioStatus.READY,
+                        audioProgressPercent = null,
                         audioPath = audioPath,
                         audioDurationMs = durationMs,
                         lastError = null,
@@ -105,6 +131,7 @@ class LibraryStore(context: Context) {
         .put("textEditedAt", textEditedAt)
         .put("importStatus", importStatus.name)
         .put("audioStatus", audioStatus.name)
+        .put("audioProgressPercent", audioProgressPercent)
         .put("audioPath", audioPath)
         .put("audioDurationMs", audioDurationMs)
         .put("lastError", lastError)
@@ -119,6 +146,9 @@ class LibraryStore(context: Context) {
         textEditedAt = optLong("textEditedAt").takeIf { has("textEditedAt") && !isNull("textEditedAt") },
         importStatus = ImportStatus.valueOf(getString("importStatus")),
         audioStatus = AudioStatus.valueOf(getString("audioStatus")),
+        audioProgressPercent = optInt("audioProgressPercent").takeIf {
+            has("audioProgressPercent") && !isNull("audioProgressPercent")
+        },
         audioPath = optString("audioPath").takeIf { it.isNotBlank() },
         audioDurationMs = optLong("audioDurationMs").takeIf { has("audioDurationMs") && !isNull("audioDurationMs") },
         lastError = optString("lastError").takeIf { it.isNotBlank() },
