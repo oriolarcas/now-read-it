@@ -2,7 +2,7 @@ package cat.oriol.nowreadit.data
 
 object TextChunker {
     fun chunk(text: String, maxChars: Int = 3500): List<String> {
-        require(maxChars > 100)
+        require(maxChars > 0)
         val normalized = text.trim().replace("\r\n", "\n")
         if (normalized.length <= maxChars) return listOf(normalized)
 
@@ -22,7 +22,7 @@ object TextChunker {
         paragraphs.forEach { paragraph ->
             if (paragraph.length > maxChars) {
                 flush()
-                paragraph.chunked(maxChars).forEach { chunks += it }
+                splitParagraphBySentences(paragraph, maxChars).forEach { chunks += it }
                 return@forEach
             }
 
@@ -33,6 +33,29 @@ object TextChunker {
         }
         flush()
         return chunks
+    }
+
+    private fun splitParagraphBySentences(paragraph: String, maxChars: Int): List<String> {
+        val sentenceRegex = Regex("(?<=[.!?])\\s+")
+        val sentences = paragraph.split(sentenceRegex).filter { it.isNotBlank() }
+        if (sentences.size <= 1) return paragraph.chunked(maxChars)
+
+        val result = mutableListOf<String>()
+        var current = StringBuilder()
+
+        sentences.forEach { sentence ->
+            val candidate = if (current.isEmpty()) sentence else "${current.toString()} $sentence"
+            if (candidate.length > maxChars && current.isNotEmpty()) {
+                result += current.toString().trim()
+                current = StringBuilder(sentence)
+            } else {
+                if (current.isNotEmpty()) current.append(' ')
+                current.append(sentence)
+            }
+        }
+
+        if (current.isNotBlank()) result += current.toString().trim()
+        return result.ifEmpty { paragraph.chunked(maxChars) }
     }
 
     private fun StringBuilder.isNotBlank(): Boolean = this.toString().isNotBlank()
