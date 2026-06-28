@@ -28,5 +28,14 @@ data class LibraryItemEntity(
     val audioGenerationTextHash: String? = null,
     val audioPath: String? = null,
     val audioDurationMs: Long? = null,
+    val audioChunks: List<AudioChunkMetadata> = emptyList(),
     val lastError: String? = null,
+)
+
+data class AudioChunkMetadata(
+    val index: Int,
+    val textStartOffset: Int,
+    val textEndOffset: Int,
+    val audioStartMs: Long,
+    val durationMs: Long?,
 )

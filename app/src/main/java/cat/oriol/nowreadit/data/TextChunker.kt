@@ -1,37 +1,63 @@
 package cat.oriol.nowreadit.data
 
 object TextChunker {
-    fun chunk(text: String, maxChars: Int = 3500): List<String> {
-        require(maxChars > 0)
-        val normalized = text.trim().replace("\r\n", "\n")
-        if (normalized.length <= maxChars) return listOf(normalized)
+    fun chunk(text: String, maxChars: Int = 3500, minChars: Int = 0): List<String> {
+        return chunksWithPositions(text, maxChars, minChars).map { it.text }
+    }
 
-        val chunks = mutableListOf<String>()
+    fun chunksWithPositions(text: String, maxChars: Int = 3500, minChars: Int = 0): List<TextChunk> {
+        require(maxChars > 0)
+        require(minChars >= 0)
+        require(minChars <= maxChars)
+        val trimmedText = text.trim()
+        val normalized = trimmedText.replace("\r\n", "\n")
+        val sourceTextStartOffset = text.indexOf(trimmedText).takeIf { it >= 0 } ?: 0
+        val chunks = mutableListOf<TextChunk>()
         val paragraphs = normalized.split(Regex("\n\\s*\n"))
             .map { it.trim() }
             .filter { it.isNotEmpty() }
 
-        var current = StringBuilder()
-        fun flush() {
-            if (current.isNotBlank()) {
-                chunks += current.toString().trim()
-                current = StringBuilder()
+        var searchStart = 0
+        fun positionedChunk(chunk: String): TextChunk {
+            val start = normalized.indexOf(chunk, startIndex = searchStart).takeIf { it >= 0 }
+                ?: normalized.indexOf(chunk).takeIf { it >= 0 }
+                ?: searchStart
+            val end = (start + chunk.length).coerceAtMost(normalized.length)
+            searchStart = end
+            return TextChunk(
+                text = chunk,
+                textStartOffset = sourceTextStartOffset + start,
+                textEndOffset = sourceTextStartOffset + end,
+            )
+        }
+
+        var pendingChunk: String? = null
+        fun flushPending() {
+            pendingChunk?.let { chunk ->
+                chunks += positionedChunk(chunk)
+                pendingChunk = null
             }
         }
 
         paragraphs.forEach { paragraph ->
             if (paragraph.length > maxChars) {
-                flush()
-                splitParagraphBySentences(paragraph, maxChars).forEach { chunks += it }
-                return@forEach
+                flushPending()
+                splitParagraphBySentences(paragraph, maxChars).forEach { chunk ->
+                    chunks += positionedChunk(chunk)
+                }
+            } else {
+                val current = pendingChunk
+                pendingChunk = when {
+                    current == null -> paragraph
+                    current.length < minChars && current.length + paragraph.length + 2 <= maxChars -> "$current\n\n$paragraph"
+                    else -> {
+                        chunks += positionedChunk(current)
+                        paragraph
+                    }
+                }
             }
-
-            val proposedLength = current.length + paragraph.length + 2
-            if (proposedLength > maxChars) flush()
-            if (current.isNotEmpty()) current.append("\n\n")
-            current.append(paragraph)
         }
-        flush()
+        flushPending()
         return chunks
     }
 
@@ -60,3 +86,9 @@ object TextChunker {
 
     private fun StringBuilder.isNotBlank(): Boolean = this.toString().isNotBlank()
 }
+
+data class TextChunk(
+    val text: String,
+    val textStartOffset: Int,
+    val textEndOffset: Int,
+)

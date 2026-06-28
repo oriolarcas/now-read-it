@@ -7,6 +7,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import cat.oriol.nowreadit.data.local.AudioChunkMetadata
 import cat.oriol.nowreadit.data.local.AudioStatus
 import cat.oriol.nowreadit.data.local.ImportStatus
 import cat.oriol.nowreadit.data.local.LibraryItemEntity
@@ -119,6 +120,7 @@ class LibraryRepository(
                         id = 0,
                         audioPath = null,
                         audioDurationMs = if (audioData != null) archiveItem.item.audioDurationMs else null,
+                        audioChunks = if (audioData != null) archiveItem.item.audioChunks else emptyList(),
                         audioStatus = if (audioData != null) AudioStatus.READY else AudioStatus.NOT_STARTED,
                         audioProgressPercent = null,
                         audioTextHash = if (audioData != null) {
@@ -139,6 +141,7 @@ class LibraryRepository(
                         audioPath = outputFile.path,
                         durationMs = archiveItem.item.audioDurationMs ?: AudioMetadataReader.readDurationMs(outputFile.path),
                         audioTextHash = archiveItem.item.audioTextHash ?: archiveItem.item.currentTextAudioHash(),
+                        audioChunks = archiveItem.item.audioChunks,
                     )
                     importedAudioCount += 1
                 }
@@ -245,7 +248,7 @@ class LibraryRepository(
 
         try {
             temporaryOutputFile.delete()
-            ttsClient.synthesizeToFile(
+            val audioChunks = ttsClient.synthesizeToFile(
                 settings = settings,
                 text = textSnapshot,
                 outputFile = temporaryOutputFile,
@@ -270,6 +273,7 @@ class LibraryRepository(
                 audioPath = outputFile.path,
                 durationMs = duration,
                 audioTextHash = generationTextHash,
+                audioChunks = audioChunks,
             )
         } catch (throwable: Throwable) {
             temporaryOutputFile.delete()
@@ -297,6 +301,14 @@ class LibraryRepository(
         .put("audioProgressPercent", null)
         .put("audioTextHash", if (audioEntryName != null) audioTextHash ?: currentTextAudioHash() else null)
         .put("audioDurationMs", audioDurationMs)
+        .put(
+            "audioChunks",
+            JSONArray().apply {
+                if (audioEntryName != null) {
+                    audioChunks.forEach { put(it.toArchiveJson()) }
+                }
+            },
+        )
         .put("audioEntryName", audioEntryName)
 
     private fun JSONObject.toArchiveItem(): ArchiveItem {
@@ -313,6 +325,7 @@ class LibraryRepository(
                 audioStatus = if (audioEntryName != null) AudioStatus.READY else AudioStatus.NOT_STARTED,
                 audioTextHash = optString("audioTextHash").takeIf { it.isNotBlank() },
                 audioDurationMs = optLong("audioDurationMs").takeIf { has("audioDurationMs") && !isNull("audioDurationMs") },
+                audioChunks = optJSONArray("audioChunks")?.toAudioChunks().orEmpty(),
             ),
             audioEntryName = audioEntryName,
         )
@@ -322,6 +335,30 @@ class LibraryRepository(
         val item: LibraryItemEntity,
         val audioEntryName: String?,
     )
+
+    private fun AudioChunkMetadata.toArchiveJson(): JSONObject = JSONObject()
+        .put("index", index)
+        .put("textStartOffset", textStartOffset)
+        .put("textEndOffset", textEndOffset)
+        .put("audioStartMs", audioStartMs)
+        .put("durationMs", durationMs)
+
+    private fun JSONArray.toAudioChunks(): List<AudioChunkMetadata> = buildList {
+        for (index in 0 until length()) {
+            val json = getJSONObject(index)
+            add(
+                AudioChunkMetadata(
+                    index = json.getInt("index"),
+                    textStartOffset = json.getInt("textStartOffset"),
+                    textEndOffset = json.getInt("textEndOffset"),
+                    audioStartMs = json.getLong("audioStartMs"),
+                    durationMs = json.optLong("durationMs").takeIf {
+                        json.has("durationMs") && !json.isNull("durationMs")
+                    },
+                ),
+            )
+        }
+    }
 
     companion object {
         private const val ARCHIVE_LIBRARY_FILE = "library-items.json"
