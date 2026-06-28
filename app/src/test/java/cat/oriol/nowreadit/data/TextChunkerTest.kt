@@ -37,4 +37,15 @@ class TextChunkerTest {
         assertEquals(5, chunks.size)
         assertTrue(chunks.all { it.length <= 120 })
     }
+
+    @Test
+    fun oversizedParagraphIsSplitAtSentenceBoundariesWhenPossible() {
+        val text = "One. Two. Three. Four."
+
+        val chunks = TextChunker.chunk(text, maxChars = 16)
+
+        assertEquals(2, chunks.size)
+        assertTrue(chunks.all { it.length <= 16 })
+        assertTrue(chunks.all { it.endsWith(".") })
+    }
 }
