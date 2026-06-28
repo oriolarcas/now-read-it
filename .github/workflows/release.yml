@@ -40,12 +40,21 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+        shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install "platforms;android-35" "build-tools;36.0.0"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          if [ ! -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "Android SDK not found at $SDK_ROOT" >&2
+            exit 1
+          fi
+
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
+          yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-35" "build-tools;36.0.0"
 
       - name: Test
         run: ./gradlew testDebugUnitTest
@@ -62,7 +71,9 @@ jobs:
 
       - name: Create GitHub release
         if: steps.release-tag.outputs.is_release_tag == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release/*.apk
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release/*.apk \
+            --title "Release ${GITHUB_REF_NAME}" \
+            --generate-notes
