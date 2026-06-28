@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FastForward
@@ -54,8 +56,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,6 +73,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import cat.oriol.nowreadit.NowReadItApplication
 import cat.oriol.nowreadit.data.TtsSettings
+import cat.oriol.nowreadit.data.local.AudioChunkMetadata
 import cat.oriol.nowreadit.data.local.AudioStatus
 import cat.oriol.nowreadit.data.local.ImportStatus
 import cat.oriol.nowreadit.data.local.LibraryItemEntity
@@ -80,6 +85,7 @@ import java.net.URI
 private const val ROUTE_LIBRARY = "library"
 private const val ROUTE_SETTINGS = "settings"
 private const val ROUTE_DETAIL = "detail"
+private const val ARTICLE_TEXT_ITEM_KEY = "article_text"
 
 @Composable
 fun NowReadItRoot(
@@ -492,8 +498,45 @@ private fun ArticleDetailContent(
     val hasGenerationForCurrentText = libraryItem.hasGenerationForCurrentText()
     val needsAudioForCurrentText = libraryItem.needsAudioForCurrentText()
     val uriHandler = LocalUriHandler.current
+    val listState = rememberLazyListState()
+    val density = LocalDensity.current
+    var textLayoutResult by remember(libraryItem.id, libraryItem.extractedText) {
+        mutableStateOf<TextLayoutResult?>(null)
+    }
+    val activeChunk = remember(libraryItem.audioChunks, playbackPositionMs, libraryItem.audioTextHash, isPlaying) {
+        activeAudioChunk(
+            libraryItem = libraryItem,
+            playbackPositionMs = playbackPositionMs,
+            isPlaying = isPlaying,
+        )
+    }
+    val articleTextItemIndex = if (hasGenerationForCurrentText) 2 else 1
+    val preferredChunkOffsetPx = with(density) { 96.dp.toPx() }
+
+    LaunchedEffect(activeChunk?.index, textLayoutResult) {
+        val chunk = activeChunk ?: return@LaunchedEffect
+        val layout = textLayoutResult ?: return@LaunchedEffect
+        val textStartOffset = chunk.textStartOffset.coerceIn(0, libraryItem.extractedText.length)
+        val line = layout.getLineForOffset(textStartOffset)
+        val lineTop = layout.getLineTop(line)
+
+        if (listState.layoutInfo.visibleItemsInfo.none { it.index == articleTextItemIndex }) {
+            listState.animateScrollToItem(articleTextItemIndex)
+        }
+
+        val textItem = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == articleTextItemIndex }
+            ?: return@LaunchedEffect
+        val targetScrollDelta = textItem.offset +
+            lineTop -
+            listState.layoutInfo.viewportStartOffset -
+            preferredChunkOffsetPx
+        if (targetScrollDelta > 1f || targetScrollDelta < -1f) {
+            listState.animateScrollBy(targetScrollDelta)
+        }
+    }
 
     LazyColumn(
+        state = listState,
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp),
@@ -538,7 +581,7 @@ private fun ArticleDetailContent(
                 )
             }
         }
-        item {
+        item(key = ARTICLE_TEXT_ITEM_KEY) {
             libraryItem.lastError?.takeIf { it.isNotBlank() }?.let { error ->
                 Text(
                     text = error,
@@ -550,8 +593,8 @@ private fun ArticleDetailContent(
             SelectionContainer {
                 HighlightedArticleText(
                     libraryItem = libraryItem,
-                    playbackPositionMs = playbackPositionMs,
-                    isPlaying = isPlaying,
+                    activeChunk = activeChunk,
+                    onTextLayout = { textLayoutResult = it },
                 )
             }
         }
@@ -561,19 +604,9 @@ private fun ArticleDetailContent(
 @Composable
 private fun HighlightedArticleText(
     libraryItem: LibraryItemEntity,
-    playbackPositionMs: Long,
-    isPlaying: Boolean,
+    activeChunk: AudioChunkMetadata?,
+    onTextLayout: (TextLayoutResult) -> Unit,
 ) {
-    val activeChunk = remember(libraryItem.audioChunks, playbackPositionMs, libraryItem.audioTextHash, isPlaying) {
-        if (!isPlaying || !libraryItem.hasCurrentAudio()) {
-            null
-        } else {
-            libraryItem.audioChunks.firstOrNull { chunk ->
-                val chunkEndMs = chunk.durationMs?.let { chunk.audioStartMs + it }
-                chunk.audioStartMs <= playbackPositionMs && (chunkEndMs == null || playbackPositionMs < chunkEndMs)
-            }
-        }
-    }
     val text = libraryItem.extractedText
     val highlightedText = buildAnnotatedString {
         append(text)
@@ -591,7 +624,20 @@ private fun HighlightedArticleText(
     Text(
         text = highlightedText,
         style = MaterialTheme.typography.bodyLarge,
+        onTextLayout = onTextLayout,
     )
+}
+
+private fun activeAudioChunk(
+    libraryItem: LibraryItemEntity,
+    playbackPositionMs: Long,
+    isPlaying: Boolean,
+): AudioChunkMetadata? {
+    if (!isPlaying || !libraryItem.hasCurrentAudio()) return null
+    return libraryItem.audioChunks.firstOrNull { chunk ->
+        val chunkEndMs = chunk.durationMs?.let { chunk.audioStartMs + it }
+        chunk.audioStartMs <= playbackPositionMs && (chunkEndMs == null || playbackPositionMs < chunkEndMs)
+    }
 }
 
 @Composable
@@ -607,7 +653,9 @@ private fun AudioPlayerBar(
 ) {
     val durationMs = playbackState.durationMs.takeIf { it > 0 } ?: fallbackDurationMs ?: 0L
     val positionMs = playbackState.positionMs.coerceIn(0L, durationMs.coerceAtLeast(0L))
-    val sliderValue = if (durationMs > 0) positionMs.toFloat() else 0f
+    var pendingSeekPositionMs by remember { mutableStateOf<Long?>(null) }
+    val sliderPositionMs = pendingSeekPositionMs ?: positionMs
+    val sliderValue = if (durationMs > 0) sliderPositionMs.toFloat() else 0f
 
     Surface(
         tonalElevation = 6.dp,
@@ -628,7 +676,11 @@ private fun AudioPlayerBar(
             }
             Slider(
                 value = sliderValue,
-                onValueChange = { onSeek(it.toLong()) },
+                onValueChange = { pendingSeekPositionMs = it.toLong() },
+                onValueChangeFinished = {
+                    pendingSeekPositionMs?.let(onSeek)
+                    pendingSeekPositionMs = null
+                },
                 valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
                 enabled = playbackState.isReady && durationMs > 0,
             )
@@ -637,7 +689,7 @@ private fun AudioPlayerBar(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = formatDuration(positionMs) ?: "0:00",
+                    text = formatDuration(sliderPositionMs) ?: "0:00",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
