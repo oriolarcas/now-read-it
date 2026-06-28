@@ -81,7 +81,13 @@ class LibraryStore(context: Context) {
         )
     }
 
-    suspend fun markAudioReady(itemId: Long, audioPath: String, durationMs: Long?, audioTextHash: String) = mutex.withLock {
+    suspend fun markAudioReady(
+        itemId: Long,
+        audioPath: String,
+        durationMs: Long?,
+        audioTextHash: String,
+        audioChunks: List<AudioChunkMetadata>,
+    ) = mutex.withLock {
         persist(
             itemsState.value.map { item ->
                 if (item.id == itemId) {
@@ -92,6 +98,7 @@ class LibraryStore(context: Context) {
                         audioGenerationTextHash = null,
                         audioPath = audioPath,
                         audioDurationMs = durationMs,
+                        audioChunks = audioChunks,
                         lastError = null,
                     )
                 } else {
@@ -154,6 +161,12 @@ class LibraryStore(context: Context) {
         .put("audioGenerationTextHash", audioGenerationTextHash)
         .put("audioPath", audioPath)
         .put("audioDurationMs", audioDurationMs)
+        .put(
+            "audioChunks",
+            JSONArray().apply {
+                audioChunks.forEach { put(it.toJson()) }
+            },
+        )
         .put("lastError", lastError)
 
     private fun JSONObject.toEntity(): LibraryItemEntity = LibraryItemEntity(
@@ -173,6 +186,31 @@ class LibraryStore(context: Context) {
         audioGenerationTextHash = optString("audioGenerationTextHash").takeIf { it.isNotBlank() },
         audioPath = optString("audioPath").takeIf { it.isNotBlank() },
         audioDurationMs = optLong("audioDurationMs").takeIf { has("audioDurationMs") && !isNull("audioDurationMs") },
+        audioChunks = optJSONArray("audioChunks")?.toAudioChunks().orEmpty(),
         lastError = optString("lastError").takeIf { it.isNotBlank() },
     )
+
+    private fun AudioChunkMetadata.toJson(): JSONObject = JSONObject()
+        .put("index", index)
+        .put("textStartOffset", textStartOffset)
+        .put("textEndOffset", textEndOffset)
+        .put("audioStartMs", audioStartMs)
+        .put("durationMs", durationMs)
+
+    private fun JSONArray.toAudioChunks(): List<AudioChunkMetadata> = buildList {
+        for (index in 0 until length()) {
+            val json = getJSONObject(index)
+            add(
+                AudioChunkMetadata(
+                    index = json.getInt("index"),
+                    textStartOffset = json.getInt("textStartOffset"),
+                    textEndOffset = json.getInt("textEndOffset"),
+                    audioStartMs = json.getLong("audioStartMs"),
+                    durationMs = json.optLong("durationMs").takeIf {
+                        json.has("durationMs") && !json.isNull("durationMs")
+                    },
+                ),
+            )
+        }
+    }
 }

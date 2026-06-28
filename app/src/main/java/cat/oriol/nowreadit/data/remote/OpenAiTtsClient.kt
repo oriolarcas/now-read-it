@@ -1,8 +1,10 @@
 package cat.oriol.nowreadit.data.remote
 
 import android.util.Log
+import cat.oriol.nowreadit.data.AudioMetadataReader
 import cat.oriol.nowreadit.data.TextChunker
 import cat.oriol.nowreadit.data.TtsSettings
+import cat.oriol.nowreadit.data.local.AudioChunkMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -23,8 +25,8 @@ class OpenAiTtsClient(
         text: String,
         outputFile: File,
         onProgress: suspend (Int) -> Unit,
-    ) = withContext(Dispatchers.IO) {
-        val chunks = TextChunker.chunk(text)
+    ): List<AudioChunkMetadata> = withContext(Dispatchers.IO) {
+        val chunks = TextChunker.chunksWithPositions(text, minChars = MIN_CHUNK_CHARS)
         if (chunks.isEmpty()) error("There is no text to synthesize.")
 
         Log.i(tag, "Prepared ${chunks.size} TTS chunk(s) for model=${settings.model} voice=${settings.voice}")
@@ -32,13 +34,15 @@ class OpenAiTtsClient(
         outputFile.parentFile?.mkdirs()
         if (outputFile.exists()) outputFile.delete()
 
+        val audioChunks = mutableListOf<AudioChunkMetadata>()
+        var audioStartMs = 0L
         FileOutputStream(outputFile, true).use { output ->
             chunks.forEachIndexed { index, chunk ->
-                Log.i(tag, "Requesting TTS chunk ${index + 1}/${chunks.size} length=${chunk.length}")
+                Log.i(tag, "Requesting TTS chunk ${index + 1}/${chunks.size} length=${chunk.text.length}")
                 val body = JSONObject()
                     .put("model", settings.model)
                     .put("voice", settings.voice)
-                    .put("input", chunk)
+                    .put("input", chunk.text)
                     .put("response_format", "mp3")
                     .put("speed", settings.speed.toDouble())
                     .toString()
@@ -58,13 +62,34 @@ class OpenAiTtsClient(
                     }
 
                     val bytes = response.body?.bytes() ?: error("TTS response was empty.")
-                    output.write(bytes)
+                    val chunkFile = File.createTempFile("tts-chunk-", ".mp3", outputFile.parentFile).apply {
+                        writeBytes(bytes)
+                    }
+                    val chunkDurationMs = AudioMetadataReader.readDurationMs(chunkFile.path)
+                    chunkFile.inputStream().use { input -> input.copyTo(output) }
+                    chunkFile.delete()
                     output.flush()
-                    Log.i(tag, "Completed TTS chunk ${index + 1}/${chunks.size} bytes=${bytes.size}")
+                    audioChunks += AudioChunkMetadata(
+                        index = index,
+                        textStartOffset = chunk.textStartOffset,
+                        textEndOffset = chunk.textEndOffset,
+                        audioStartMs = audioStartMs,
+                        durationMs = chunkDurationMs,
+                    )
+                    audioStartMs += chunkDurationMs ?: 0L
+                    Log.i(
+                        tag,
+                        "Completed TTS chunk ${index + 1}/${chunks.size} bytes=${bytes.size} durationMs=${chunkDurationMs ?: -1}",
+                    )
                 }
 
                 onProgress(((index + 1) * 100) / chunks.size)
             }
         }
+        audioChunks
+    }
+
+    private companion object {
+        private const val MIN_CHUNK_CHARS = 200
     }
 }

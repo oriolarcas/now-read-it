@@ -54,6 +54,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -408,6 +410,8 @@ private fun ItemDetailScreen(
         } else {
             ArticleDetailContent(
                 libraryItem = currentItem,
+                playbackPositionMs = playbackState.positionMs,
+                isPlaying = playbackState.isPlaying,
                 onEdit = { isEditing = true },
                 onReadNow = { confirmGeneration = true },
                 modifier = Modifier.padding(paddingValues),
@@ -446,6 +450,8 @@ private fun ItemDetailScreen(
 @Composable
 private fun ArticleDetailContent(
     libraryItem: LibraryItemEntity,
+    playbackPositionMs: Long,
+    isPlaying: Boolean,
     onEdit: () -> Unit,
     onReadNow: () -> Unit,
     modifier: Modifier = Modifier,
@@ -509,13 +515,50 @@ private fun ArticleDetailContent(
                 Spacer(modifier = Modifier.height(8.dp))
             }
             SelectionContainer {
-                Text(
-                    text = libraryItem.extractedText,
-                    style = MaterialTheme.typography.bodyLarge,
+                HighlightedArticleText(
+                    libraryItem = libraryItem,
+                    playbackPositionMs = playbackPositionMs,
+                    isPlaying = isPlaying,
                 )
             }
         }
     }
+}
+
+@Composable
+private fun HighlightedArticleText(
+    libraryItem: LibraryItemEntity,
+    playbackPositionMs: Long,
+    isPlaying: Boolean,
+) {
+    val activeChunk = remember(libraryItem.audioChunks, playbackPositionMs, libraryItem.audioTextHash, isPlaying) {
+        if (!isPlaying || !libraryItem.hasCurrentAudio()) {
+            null
+        } else {
+            libraryItem.audioChunks.firstOrNull { chunk ->
+                val chunkEndMs = chunk.durationMs?.let { chunk.audioStartMs + it }
+                chunk.audioStartMs <= playbackPositionMs && (chunkEndMs == null || playbackPositionMs < chunkEndMs)
+            }
+        }
+    }
+    val text = libraryItem.extractedText
+    val highlightedText = buildAnnotatedString {
+        append(text)
+        val start = activeChunk?.textStartOffset?.coerceIn(0, text.length)
+        val end = activeChunk?.textEndOffset?.coerceIn(0, text.length)
+        if (start != null && end != null && start < end) {
+            addStyle(
+                style = SpanStyle(background = MaterialTheme.colorScheme.secondaryContainer),
+                start = start,
+                end = end,
+            )
+        }
+    }
+
+    Text(
+        text = highlightedText,
+        style = MaterialTheme.typography.bodyLarge,
+    )
 }
 
 @Composable
