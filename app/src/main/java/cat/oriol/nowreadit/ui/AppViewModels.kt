@@ -398,7 +398,14 @@ class SettingsViewModel(
 class LibraryViewModelFactory(
     private val repository: LibraryRepository,
 ) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T = LibraryViewModel(repository) as T
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        require(modelClass.isAssignableFrom(LibraryViewModel::class.java)) {
+            "Unsupported ViewModel type: ${modelClass.name}"
+        }
+        return requireNotNull(modelClass.cast(LibraryViewModel(repository))) {
+            "Failed to create LibraryViewModel"
+        }
+    }
 }
 
 class ItemDetailViewModelFactory(
@@ -406,16 +413,34 @@ class ItemDetailViewModelFactory(
     private val appContext: Context,
     private val repository: LibraryRepository,
 ) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T = ItemDetailViewModel(
-        itemId = itemId,
-        appContext = appContext,
-        repository = repository,
-    ) as T
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        require(modelClass.isAssignableFrom(ItemDetailViewModel::class.java)) {
+            "Unsupported ViewModel type: ${modelClass.name}"
+        }
+        return requireNotNull(
+            modelClass.cast(
+                ItemDetailViewModel(
+                    itemId = itemId,
+                    appContext = appContext,
+                    repository = repository,
+                ),
+            ),
+        ) {
+            "Failed to create ItemDetailViewModel"
+        }
+    }
 }
 
 class SettingsViewModelFactory(
     private val settingsStore: SettingsStore,
     private val repository: LibraryRepository,
 ) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T = SettingsViewModel(settingsStore, repository) as T
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        require(modelClass.isAssignableFrom(SettingsViewModel::class.java)) {
+            "Unsupported ViewModel type: ${modelClass.name}"
+        }
+        return requireNotNull(modelClass.cast(SettingsViewModel(settingsStore, repository))) {
+            "Failed to create SettingsViewModel"
+        }
+    }
 }
