@@ -2,6 +2,7 @@ package cat.oriol.nowreadit.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -131,7 +132,6 @@ fun NowReadItRoot(
                 ItemDetailScreen(
                     itemId = itemId,
                     viewModel = viewModel,
-                    onBack = { navController.popBackStack() },
                 )
             }
         }
@@ -214,11 +214,17 @@ private fun LibraryScreen(
                 Text(if (isImporting) "Importing..." else "Save to library")
             }
             Spacer(modifier = Modifier.height(20.dp))
+            if (isImporting) {
+                ImportingItemCard()
+                Spacer(modifier = Modifier.height(12.dp))
+            }
             if (items.isEmpty()) {
-                Text(
-                    text = "No saved items yet. Add a URL here or share one from another app.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                if (!isImporting) {
+                    Text(
+                        text = "No saved items yet. Add a URL here or share one from another app.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
             } else {
                 LazyColumn(
                     contentPadding = PaddingValues(bottom = 24.dp),
@@ -233,6 +239,26 @@ private fun LibraryScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ImportingItemCard() {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Importing article",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Extracting the page text and preparing a library item.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -327,7 +353,6 @@ private fun websiteDomain(url: String): String =
 private fun ItemDetailScreen(
     itemId: Long,
     viewModel: ItemDetailViewModel,
-    onBack: () -> Unit,
 ) {
     val item by viewModel.item.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
@@ -338,6 +363,14 @@ private fun ItemDetailScreen(
     var confirmGeneration by rememberSaveable { mutableStateOf(false) }
     var isEditing by rememberSaveable(itemId) { mutableStateOf(false) }
     val currentItem = item
+    fun leaveEditMode() {
+        currentItem?.let { editorText = it.extractedText }
+        isEditing = false
+    }
+
+    BackHandler(enabled = isEditing) {
+        leaveEditMode()
+    }
 
     LaunchedEffect(item?.id, item?.extractedText) {
         val current = item ?: return@LaunchedEffect
